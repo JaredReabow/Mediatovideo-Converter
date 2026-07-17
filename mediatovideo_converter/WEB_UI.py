@@ -46,15 +46,23 @@ _NAMING_LABELS = {
     "Month-Day (07-17)": NamingMode.MONTH_DAY,
     "Month-Day-Category (07-17-Camera1)": NamingMode.MONTH_DAY_CATEGORY,
 }
+_MAX_UI_MESSAGES = 5000
+_MAX_LOG_LINES = 2000
+
+
 class MediaToVideoApp:
     """Own and coordinate the desktop interface."""
 
     def __init__(self, root: tk.Tk) -> None:
         self._root = root
-        self._messages: queue.Queue[tuple[Any, ...]] = queue.Queue()
+        self._messages: queue.Queue[tuple[Any, ...]] = queue.Queue(
+            maxsize=_MAX_UI_MESSAGES
+        )
         self._cancel_event = threading.Event()
         self._scan_result: ScanResult | None = None
         self._busy_operation: str | None = None
+        self._log_line_count = 0
+
         self._source = tk.StringVar()
         self._output = tk.StringVar()
         self._ffmpeg_directory = tk.StringVar()
@@ -335,17 +343,17 @@ class MediaToVideoApp:
                 result = scanner_scan(
                     source,
                     grouping,
-                    progress=lambda count, path: self._messages.put(
-                        ("scan_progress", count, path)
+                    progress=lambda count, path: self._queue_message(
+                        ("scan_progress", count, path), lossy=True
                     ),
                     cancel_event=self._cancel_event,
                 )
             except ScanCancelled:
-                self._messages.put(("scan_cancelled",))
+                self._queue_message(("scan_cancelled",))
             except Exception as error:  # Surface unexpected filesystem errors.
-                self._messages.put(("operation_error", "Scanning source", error))
+                self._queue_message(("operation_error", "Scanning source", error))
             else:
-                self._messages.put(("scan_done", result))
+                self._queue_message(("scan_done", result))
 
         threading.Thread(target=worker, name="media-scan", daemon=True).start()
 
@@ -393,15 +401,16 @@ class MediaToVideoApp:
                 summary = converter_convert(
                     groups,
                     options,
-                    event=lambda name, details: self._messages.put(
-                        ("conversion_event", name, details)
+                    event=lambda name, details: self._queue_message(
+                        ("conversion_event", name, details),
+                        lossy=name in {"validation_progress", "encoding_progress"},
                     ),
                     cancel_event=self._cancel_event,
                 )
             except Exception as error:  # Includes missing dependencies.
-                self._messages.put(("operation_error", "Converting videos", error))
+                self._queue_message(("operation_error", "Converting videos", error))
             else:
-                self._messages.put(("conversion_done", summary))
+                self._queue_message(("conversion_done", summary))
 
         threading.Thread(target=worker, name="media-convert", daemon=True).start()
 
@@ -638,13 +647,33 @@ class MediaToVideoApp:
         self._append_log(details)
         messagebox.showwarning("Action needed", details)
 
+    def _queue_message(self, message: tuple[Any, ...], lossy: bool = False) -> None:
+        """Queue worker messages without allowing unbounded memory growth."""
+
+        if lossy:
+            try:
+                self._messages.put_nowait(message)
+            except queue.Full:
+                pass
+            return
+        self._messages.put(message)
+
     def _append_log(self, text: str) -> None:
         """Append one readable line to the persistent activity log."""
+
+        # Trim oldest lines so long runs do not grow the text buffer forever.
+        while self._log_line_count >= _MAX_LOG_LINES:
+            self._log.configure(state=tk.NORMAL)
+            self._log.delete("1.0", "2.0")
+            self._log.configure(state=tk.DISABLED)
+            self._log_line_count -= 1
 
         self._log.configure(state=tk.NORMAL)
         self._log.insert(tk.END, text.rstrip() + "\n")
         self._log.see(tk.END)
         self._log.configure(state=tk.DISABLED)
+        self._log_line_count += 1
+
     def _clear_group_table(self) -> None:
         """Remove all stale rows from the scan preview."""
 

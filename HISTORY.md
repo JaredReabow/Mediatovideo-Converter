@@ -27,3 +27,10 @@ project history.
 - Standardised installation, scan, conversion, and filesystem errors around a
   clear stage, problem, recovery action, and technical detail.
 - Added installer/error regression tests and updated the documentation renders.
+
+## 2026-07-17 — Version 0.2.1
+
+- Published the queued performance work for large exports: bounded UI messages
+  and logs, throttled high-frequency progress events, and single-pass scanning.
+- Preserved final scan/conversion feedback while reducing avoidable memory and
+  interface-update pressure.

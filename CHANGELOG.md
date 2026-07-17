@@ -2,6 +2,18 @@
 
 All notable changes to Mediatovideo Converter are recorded here.
 
+## [0.2.1] - 2026-07-17
+
+### Changed
+
+- Bounded the GUI worker-message queue and activity log so very large camera
+  exports cannot grow interface memory without limit.
+- Throttled validation and encoding progress events while retaining final
+  progress updates.
+- Grouped discovered clips during directory traversal instead of retaining a
+  second complete list of every source file.
+- Updated application renders to show version 0.2.1.
+
 ## [0.2.0] - 2026-07-17
 
 ### Added

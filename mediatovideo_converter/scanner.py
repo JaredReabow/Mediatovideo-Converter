@@ -37,8 +37,12 @@ def scanner_scan(
     if not source_root.is_dir():
         raise ValueError(f"Source folder does not exist: {source_root}")
 
-    media_files: list[Path] = []
+    media_file_count = 0
     visited = 0
+    grouped: dict[tuple[Path, str | None], list[Path]] = defaultdict(list)
+    date_details: dict[Path, tuple[str, str, str]] = {}
+    unrecognised = 0
+
     for current_root, directory_names, filenames in os.walk(source_root):
         _scanner_check_cancel(cancel_event)
         directory_names.sort(key=str.casefold)
@@ -47,28 +51,22 @@ def scanner_scan(
         visited += len(directory_names) + len(filenames)
         if progress:
             progress(visited, current_path)
-        media_files.extend(
-            current_path / filename
-            for filename in filenames
-            if Path(filename).suffix.casefold() == ".media"
-        )
-
-    grouped: dict[tuple[Path, str | None], list[Path]] = defaultdict(list)
-    date_details: dict[Path, tuple[str, str, str]] = {}
-    unrecognised = 0
-
-    for media_file in media_files:
-        _scanner_check_cancel(cancel_event)
-        date_match = _scanner_find_date_root(media_file.parent, source_root)
-        if date_match is None:
-            day_root = source_root
-            category = _scanner_category(media_file, day_root, grouping_mode)
-            unrecognised += 1
-        else:
-            day_root, year, month, day = date_match
-            date_details[day_root] = (year, month, day)
-            category = _scanner_category(media_file, day_root, grouping_mode)
-        grouped[(day_root, category)].append(media_file)
+        for filename in filenames:
+            if Path(filename).suffix.casefold() != ".media":
+                continue
+            _scanner_check_cancel(cancel_event)
+            media_file = current_path / filename
+            media_file_count += 1
+            date_match = _scanner_find_date_root(media_file.parent, source_root)
+            if date_match is None:
+                day_root = source_root
+                category = _scanner_category(media_file, day_root, grouping_mode)
+                unrecognised += 1
+            else:
+                day_root, year, month, day = date_match
+                date_details[day_root] = (year, month, day)
+                category = _scanner_category(media_file, day_root, grouping_mode)
+            grouped[(day_root, category)].append(media_file)
 
     groups: list[MediaGroup] = []
     for (day_root, category), files in grouped.items():
@@ -91,7 +89,7 @@ def scanner_scan(
     return ScanResult(
         source_root=source_root,
         groups=tuple(groups),
-        media_file_count=len(media_files),
+        media_file_count=media_file_count,
         day_count=len(recognised_days) + fallback_days,
         unrecognised_date_files=unrecognised,
     )

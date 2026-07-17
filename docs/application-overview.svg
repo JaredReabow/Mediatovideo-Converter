@@ -8,7 +8,7 @@
   <circle cx="1240" cy="100" r="250" fill="#38bdf8" opacity=".07"/><circle cx="100" cy="820" r="260" fill="#3b82f6" opacity=".07"/>
   <g filter="url(#shadow)"><rect x="70" y="45" width="1260" height="810" rx="22" fill="#f8fafc"/><path d="M92 45h1216a22 22 0 0 1 22 22v51H70V67a22 22 0 0 1 22-22z" fill="#e2e8f0"/></g>
   <circle cx="108" cy="82" r="10" fill="#fb7185"/><circle cx="140" cy="82" r="10" fill="#fbbf24"/><circle cx="172" cy="82" r="10" fill="#34d399"/>
-  <text x="700" y="90" text-anchor="middle" font-family="Arial" font-size="20" font-weight="700" fill="#334155">Mediatovideo Converter 0.2.0</text>
+  <text x="700" y="90" text-anchor="middle" font-family="Arial" font-size="20" font-weight="700" fill="#334155">Mediatovideo Converter 0.2.1</text>
   <text x="115" y="168" font-family="Arial" font-size="34" font-weight="700" fill="#0f172a">Mediatovideo Converter</text>
   <text x="115" y="201" font-family="Arial" font-size="18" fill="#64748b">Combine camera .media clips into usable MKV or MP4 videos.</text>
   <rect x="1092" y="151" width="188" height="42" rx="21" fill="#dbeafe"/><text x="1186" y="178" text-anchor="middle" font-family="Arial" font-size="15" font-weight="700" fill="#1d4ed8">Windows + macOS</text>

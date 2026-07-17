@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Callable, Sequence
@@ -24,6 +25,11 @@ from .models import (
 
 ConversionEvent = Callable[[str, dict[str, object]], None]
 _INVALID_FILENAME = re.compile(r"[<>:\"/\\|?*\x00-\x1f]")
+_VALIDATION_EVENT_INTERVAL_SECONDS = 0.2
+_ENCODING_EVENT_INTERVAL_SECONDS = 0.2
+_ENCODING_EVENT_MIN_FRACTION_STEP = 0.005
+
+
 class ConversionCancelled(Exception):
     """Raised internally when conversion cancellation is requested."""
 
@@ -119,6 +125,7 @@ def converter_convert(
             )
             valid_files: list[Path] = []
             total_duration = 0.0
+            last_validation_event_time = 0.0
             for file_index, media_file in enumerate(group.files, start=1):
                 _converter_check_cancel(cancel_event)
                 duration = _converter_probe_media(ffprobe, media_file)
@@ -128,13 +135,20 @@ def converter_convert(
                 else:
                     valid_files.append(media_file)
                     total_duration += duration
-                _converter_emit(
-                    event,
-                    "validation_progress",
-                    current=file_index,
-                    total=len(group.files),
-                    path=media_file,
-                )
+                now = time.monotonic()
+                if (
+                    file_index == len(group.files)
+                    or now - last_validation_event_time
+                    >= _VALIDATION_EVENT_INTERVAL_SECONDS
+                ):
+                    _converter_emit(
+                        event,
+                        "validation_progress",
+                        current=file_index,
+                        total=len(group.files),
+                        path=media_file,
+                    )
+                    last_validation_event_time = now
 
             if not valid_files:
                 label = _converter_group_label(group)
@@ -303,6 +317,8 @@ def _converter_run_ffmpeg(
             )
             assert process.stdout is not None
             diagnostic_lines: deque[str] = deque(maxlen=12)
+            last_encoding_event_time = 0.0
+            last_encoding_fraction: float | None = None
             try:
                 while True:
                     if cancel_event and cancel_event.is_set():
@@ -327,13 +343,32 @@ def _converter_run_ffmpeg(
                             if total_duration
                             else None
                         )
-                        _converter_emit(
-                            event,
-                            "encoding_progress",
-                            elapsed=elapsed,
-                            duration=total_duration,
-                            fraction=fraction,
-                        )
+                        now = time.monotonic()
+                        should_emit = False
+                        if fraction is None:
+                            should_emit = (
+                                now - last_encoding_event_time
+                                >= _ENCODING_EVENT_INTERVAL_SECONDS
+                            )
+                        else:
+                            should_emit = (
+                                last_encoding_fraction is None
+                                or fraction >= 1.0
+                                or fraction - last_encoding_fraction
+                                >= _ENCODING_EVENT_MIN_FRACTION_STEP
+                                or now - last_encoding_event_time
+                                >= _ENCODING_EVENT_INTERVAL_SECONDS
+                            )
+                        if should_emit:
+                            _converter_emit(
+                                event,
+                                "encoding_progress",
+                                elapsed=elapsed,
+                                duration=total_duration,
+                                fraction=fraction,
+                            )
+                            last_encoding_event_time = now
+                            last_encoding_fraction = fraction
                     elif line.strip() and key not in {
                         "bitrate",
                         "drop_frames",
