@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mediatovideo-converter"
+version = "0.1.0"
+description = "Cross-platform GUI for combining camera .media clips into videos"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+mediatovideo-converter = "mediatovideo_converter.WEB_UI:web_ui_main"
+
+[tool.setuptools]
+packages = ["mediatovideo_converter"]
