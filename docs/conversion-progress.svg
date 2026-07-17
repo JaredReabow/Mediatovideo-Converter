@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111827"/><stop offset="1" stop-color="#164e63"/></linearGradient>
+    <linearGradient id="bar"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#06b6d4"/></linearGradient>
+    <filter id="shadow2"><feDropShadow dy="18" stdDeviation="22" flood-color="#020617" flood-opacity=".45"/></filter>
+  </defs>
+  <rect width="1400" height="900" fill="url(#bg2)"/><circle cx="1250" cy="800" r="260" fill="#22d3ee" opacity=".07"/><circle cx="100" cy="100" r="230" fill="#3b82f6" opacity=".08"/>
+  <g filter="url(#shadow2)"><rect x="70" y="45" width="1260" height="810" rx="22" fill="#f8fafc"/><path d="M92 45h1216a22 22 0 0 1 22 22v51H70V67a22 22 0 0 1 22-22z" fill="#e2e8f0"/></g>
+  <circle cx="108" cy="82" r="10" fill="#fb7185"/><circle cx="140" cy="82" r="10" fill="#fbbf24"/><circle cx="172" cy="82" r="10" fill="#34d399"/><text x="700" y="90" text-anchor="middle" font-family="Arial" font-size="20" font-weight="700" fill="#334155">Mediatovideo Converter 0.1.0</text>
+  <text x="115" y="168" font-family="Arial" font-size="32" font-weight="700" fill="#0f172a">Visible progress at every stage</text><text x="115" y="201" font-family="Arial" font-size="18" fill="#64748b">Scanning, validation, conversion, cancellation, and results are always acknowledged.</text>
+
+  <rect x="110" y="233" width="1180" height="260" rx="14" fill="#fff" stroke="#cbd5e1"/><text x="138" y="270" font-family="Arial" font-size="18" font-weight="700" fill="#334155">Scan results</text>
+  <rect x="1050" y="248" width="205" height="38" rx="19" fill="#dcfce7"/><circle cx="1074" cy="267" r="8" fill="#22c55e"/><text x="1092" y="273" font-family="Arial" font-size="14" font-weight="700" fill="#166534">Scan complete</text>
+  <rect x="138" y="305" width="1117" height="42" rx="7" fill="#e2e8f0"/><g font-family="Arial" font-size="14" font-weight="700" fill="#475569"><text x="160" y="332">EXAMPLE GROUP</text><text x="650" y="332">CATEGORY</text><text x="1195" y="332" text-anchor="end">CLIPS</text></g>
+  <g stroke="#e2e8f0"><line x1="138" y1="393" x2="1255" y2="393"/><line x1="138" y1="439" x2="1255" y2="439"/></g>
+  <g font-family="Arial" font-size="15" fill="#0f172a"><text x="160" y="379">Example day 1</text><text x="650" y="379">Camera A</text><text x="1195" y="379" text-anchor="end">24</text><text x="160" y="425">Example day 1</text><text x="650" y="425">Camera B</text><text x="1195" y="425" text-anchor="end">18</text><text x="160" y="471">Example day 2</text><text x="650" y="471">All clips</text><text x="1195" y="471" text-anchor="end">36</text></g>
+
+  <rect x="110" y="516" width="1180" height="270" rx="14" fill="#fff" stroke="#cbd5e1"/><text x="138" y="555" font-family="Arial" font-size="18" font-weight="700" fill="#334155">Conversion progress</text>
+  <text x="138" y="596" font-family="Arial" font-size="15" fill="#475569">Video 2 of 3 — example-day-1-Camera-B.mkv</text><text x="1255" y="596" text-anchor="end" font-family="Arial" font-size="14" font-weight="700" fill="#2563eb">2 / 3 videos</text>
+  <rect x="138" y="611" width="1117" height="18" rx="9" fill="#e2e8f0"/><rect x="138" y="611" width="745" height="18" rx="9" fill="#2563eb"/>
+  <text x="138" y="671" font-family="Arial" font-size="15" fill="#475569">Encoding current video</text><text x="1255" y="671" text-anchor="end" font-family="Arial" font-size="14" font-weight="700" fill="#2563eb">81.0%</text>
+  <rect x="138" y="686" width="1117" height="18" rx="9" fill="#e2e8f0"/><rect x="138" y="686" width="905" height="18" rx="9" fill="#2563eb"/>
+  <rect x="138" y="730" width="1117" height="38" rx="8" fill="#f1f5f9"/><circle cx="164" cy="749" r="8" fill="#22c55e"/><text x="184" y="755" font-family="Arial" font-size="14" fill="#475569">Completed Camera A · converting next example group…</text>
+  <rect x="110" y="808" width="1180" height="30" rx="9" fill="#eff6ff" stroke="#bfdbfe"/><text x="136" y="829" font-family="Arial" font-size="14" fill="#1e3a8a">Conversion in progress — Cancel remains available for a safe stop.</text>
+</svg>

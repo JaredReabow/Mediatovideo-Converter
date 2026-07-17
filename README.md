@@ -6,6 +6,15 @@ combining camera `.media` clips into usable video files. It expands the
 with folder-aware grouping, validation, progress reporting, cancellation, and a
 graphical interface.
 
+## Application renders
+
+The renders below use fictional interface state only. They contain no user
+media, filenames, source folders, video frames, or photographs.
+
+![Mediatovideo Converter setup screen](docs/application-overview.png)
+
+![Mediatovideo Converter conversion progress](docs/conversion-progress.png)
+
 ## Features
 
 - Select one day folder such as `DCIM/2026/07/17`, or select a higher folder to

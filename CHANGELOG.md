@@ -2,6 +2,13 @@
 
 All notable changes to Mediatovideo Converter are recorded here.
 
+## Unreleased
+
+### Documentation
+
+- Added privacy-safe application renders made only with fictional interface
+  state for the repository and original Gist.
+
 ## [0.1.0] - 2026-07-17
 
 ### Added

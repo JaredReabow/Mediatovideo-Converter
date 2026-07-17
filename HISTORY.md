@@ -10,3 +10,9 @@ project history.
   GUI while retaining the original shell proof of concept for reference.
 - Added cross-platform scanning, grouping, FFmpeg conversion, progress,
   cancellation, tests, packaging support, and user documentation.
+
+## 2026-07-17 — Application renders and Gist handoff
+
+- Added two privacy-safe interface renders using only fictional state.
+- Prepared the original Gist to describe this graphical implementation and
+  direct readers to the complete GitHub repository.
