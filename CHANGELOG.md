@@ -2,10 +2,27 @@
 
 All notable changes to Mediatovideo Converter are recorded here.
 
-## Unreleased
+## [0.2.0] - 2026-07-17
+
+### Added
+
+- Windows prerequisite installer using WinGet and Python's install manager.
+- macOS prerequisite installer using an existing compatible Python or Homebrew.
+- Automatic checks and post-install verification for Python 3.9+, Tkinter,
+  FFmpeg, and FFprobe on every launcher start.
+- Visible startup terminal progress, installation stages, and recovery actions.
+- Structured Stage, Problem, What to do, and Technical detail error messages.
+- Installer and error-message regression tests.
+
+### Changed
+
+- Scan, conversion, output-folder, FFmpeg, and direct-launch failures now explain
+  both the likely cause and the next action.
+- Updated privacy-safe application renders to show version 0.2.0.
 
 ### Documentation
 
+- Added automatic and manual prerequisite installation instructions.
 - Added privacy-safe application renders made only with fictional interface
   state for the repository and original Gist.
 

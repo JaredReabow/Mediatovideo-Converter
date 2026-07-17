@@ -12,6 +12,7 @@ from collections import deque
 from pathlib import Path
 from typing import Callable, Sequence
 
+from .error_messages import error_messages_format, error_messages_path
 from .models import (
     ConversionOptions,
     ConversionSummary,
@@ -23,14 +24,16 @@ from .models import (
 
 ConversionEvent = Callable[[str, dict[str, object]], None]
 _INVALID_FILENAME = re.compile(r"[<>:\"/\\|?*\x00-\x1f]")
-
-
 class ConversionCancelled(Exception):
     """Raised internally when conversion cancellation is requested."""
 
 
 class FFmpegNotFoundError(RuntimeError):
     """Raised when FFmpeg and FFprobe cannot be located."""
+
+
+class ConversionProcessError(RuntimeError):
+    """Raised with a complete user-facing explanation of a group failure."""
 
 
 def converter_find_tools(ffmpeg_directory: Path | None = None) -> tuple[str, str]:
@@ -44,14 +47,26 @@ def converter_find_tools(ffmpeg_directory: Path | None = None) -> tuple[str, str
         if ffmpeg.is_file() and ffprobe.is_file():
             return str(ffmpeg), str(ffprobe)
         raise FFmpegNotFoundError(
-            f"FFmpeg and FFprobe were not both found in: {directory}"
+            error_messages_format(
+                "Checking video tools",
+                "FFmpeg and FFprobe were not both found in the selected folder.",
+                "Select the folder containing both executables, or restart the app "
+                "with run_windows.bat or run_macos.command to install them.",
+                error_messages_path(directory),
+            )
         )
 
     ffmpeg_path = shutil.which("ffmpeg")
     ffprobe_path = shutil.which("ffprobe")
     if not ffmpeg_path or not ffprobe_path:
         raise FFmpegNotFoundError(
-            "FFmpeg and FFprobe are required. Install FFmpeg or select its bin folder."
+            error_messages_format(
+                "Checking video tools",
+                "FFmpeg and FFprobe are required but could not both be found.",
+                "Close the app and start it with run_windows.bat or "
+                "run_macos.command so the missing tools can be installed. You may "
+                "also select an existing FFmpeg bin folder in the app.",
+            )
         )
     return ffmpeg_path, ffprobe_path
 
@@ -123,12 +138,20 @@ def converter_convert(
 
             if not valid_files:
                 label = _converter_group_label(group)
-                failures.append(f"{label}: no readable .media files")
+                failures.append(
+                    f"{label}\n"
+                    + error_messages_format(
+                        "Validating source clips",
+                        "No readable .media clips remained in this group.",
+                        "Check that the camera export is complete and try the original "
+                        "files again. The other video groups will continue.",
+                    )
+                )
                 _converter_emit(event, "group_failed", target=target, reason=failures[-1])
                 continue
 
-            target.parent.mkdir(parents=True, exist_ok=True)
             try:
+                target.parent.mkdir(parents=True, exist_ok=True)
                 _converter_run_ffmpeg(
                     ffmpeg,
                     valid_files,
@@ -140,9 +163,15 @@ def converter_convert(
                 )
             except ConversionCancelled:
                 raise
-            except RuntimeError as error:
-                failures.append(f"{_converter_group_label(group)}: {error}")
-                _converter_emit(event, "group_failed", target=target, reason=str(error))
+            except ConversionProcessError as error:
+                reason = str(error)
+                failures.append(f"{_converter_group_label(group)}\n{reason}")
+                _converter_emit(event, "group_failed", target=target, reason=reason)
+                continue
+            except OSError as error:
+                reason = _converter_explain_output_error(error, target)
+                failures.append(f"{_converter_group_label(group)}\n{reason}")
+                _converter_emit(event, "group_failed", target=target, reason=reason)
                 continue
 
             completed.append(target)
@@ -323,8 +352,15 @@ def _converter_run_ffmpeg(
 
             if process.returncode != 0:
                 final_line = diagnostic_lines[-1] if diagnostic_lines else "FFmpeg failed"
-                raise RuntimeError(final_line)
-            os.replace(partial_target, target)
+                raise ConversionProcessError(
+                    _converter_explain_ffmpeg_error(final_line, target, video_format)
+                )
+            try:
+                os.replace(partial_target, target)
+            except OSError as error:
+                raise ConversionProcessError(
+                    _converter_explain_output_error(error, target)
+                ) from error
     finally:
         partial_target.unlink(missing_ok=True)
 
@@ -342,6 +378,85 @@ def _converter_output_directory(
     ):
         return options.output_root / group.year / group.month / group.day
     return options.output_root
+
+
+def _converter_explain_ffmpeg_error(
+    diagnostic: str, target: Path, video_format: VideoFormat
+) -> str:
+    """Translate common FFmpeg diagnostics into an actionable explanation."""
+
+    lower_diagnostic = diagnostic.casefold()
+    if "permission denied" in lower_diagnostic:
+        problem = "FFmpeg cannot write to the selected output folder."
+        action = "Choose an output folder you can write to, then convert again."
+    elif "no space left" in lower_diagnostic:
+        problem = "The output drive ran out of free space."
+        action = "Free disk space or choose another output drive, then convert again."
+    elif "unknown encoder" in lower_diagnostic and "libx264" in lower_diagnostic:
+        problem = "This FFmpeg installation does not include the H.264 encoder."
+        action = (
+            "Restart with the platform launcher to install the supported FFmpeg "
+            "package, or choose MKV stream-copy output."
+        )
+    elif any(
+        phrase in lower_diagnostic
+        for phrase in (
+            "invalid data found",
+            "could not find codec parameters",
+            "error opening input",
+        )
+    ):
+        problem = "One or more camera clips contain unreadable or unsupported data."
+        action = (
+            "Check the activity log for skipped clips. Try MP4 output if MKV was "
+            "selected, or restore the original camera export and retry."
+        )
+    elif "non-monoton" in lower_diagnostic or "timestamp" in lower_diagnostic:
+        problem = "The source clips contain timestamps that cannot be joined as selected."
+        action = "Choose MP4 H.264 output so FFmpeg can rebuild the timestamps."
+    elif video_format is VideoFormat.MKV_COPY:
+        problem = "FFmpeg could not join these clips without changing their streams."
+        action = (
+            "Try MP4 H.264 output for this source. It is slower but can repair many "
+            "stream-compatibility differences."
+        )
+    else:
+        problem = "FFmpeg could not decode or encode this video group."
+        action = (
+            "Check the source clips are complete and readable, then review the "
+            "technical detail below before retrying."
+        )
+    return error_messages_format(
+        "Creating output video",
+        problem,
+        action,
+        f"Output: {target}\nFFmpeg: {diagnostic}",
+    )
+
+
+def _converter_explain_output_error(error: OSError, target: Path) -> str:
+    """Explain filesystem failures encountered while creating an output."""
+
+    detail = str(error).strip() or error.__class__.__name__
+    lower_detail = detail.casefold()
+    if isinstance(error, PermissionError) or "permission denied" in lower_detail:
+        problem = "The selected output folder is not writable."
+        action = "Choose a writable output folder, then run the conversion again."
+    elif "no space left" in lower_detail:
+        problem = "The selected output drive does not have enough free space."
+        action = "Free disk space or choose another output folder, then try again."
+    else:
+        problem = "The completed video could not be written to its destination."
+        action = (
+            "Confirm the output drive is connected and writable, then choose the "
+            "output folder again."
+        )
+    return error_messages_format(
+        "Saving output video",
+        problem,
+        action,
+        f"{error_messages_path(target)}\nSystem: {detail}",
+    )
 
 
 def _converter_output_stem(group: MediaGroup, naming_mode: NamingMode) -> str:

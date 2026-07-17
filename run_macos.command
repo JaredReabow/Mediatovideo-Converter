@@ -1,22 +1,13 @@
 #!/bin/sh
-cd "$(dirname "$0")"
+SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export SCRIPT_DIRECTORY
+cd "$SCRIPT_DIRECTORY" || exit 1
 
-# Prefer a normal desktop Python over tool-specific environments (for example,
-# PlatformIO's Python), which often omit the Tkinter GUI module.
-for python_candidate in \
-    /opt/homebrew/bin/python3 \
-    /usr/local/bin/python3 \
-    /usr/bin/python3 \
-    python3
-do
-    if command -v "$python_candidate" >/dev/null 2>&1 && \
-        "$python_candidate" -c "import tkinter" >/dev/null 2>&1
-    then
-        exec "$python_candidate" run_app.py
-    fi
-done
+# Keep the terminal visible so installation progress and errors can be read.
+. "$SCRIPT_DIRECTORY/install_macos.sh"
+install_macos_and_run
+APP_EXIT_CODE=$?
 
-echo "Mediatovideo Converter needs Python 3.9 or newer with Tkinter."
-echo "Install Python from https://www.python.org/downloads/ and try again."
-printf "Press Return to close..."
+printf '\nPress Return to close this window...'
 read answer
+exit "$APP_EXIT_CODE"

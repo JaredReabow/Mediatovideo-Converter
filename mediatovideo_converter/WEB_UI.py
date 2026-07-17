@@ -18,6 +18,7 @@ from typing import Any
 
 from . import __version__
 from .converter import FFmpegNotFoundError, converter_convert, converter_find_tools
+from .error_messages import error_messages_format, error_messages_format_operation
 from .models import (
     ConversionOptions,
     ConversionSummary,
@@ -45,8 +46,6 @@ _NAMING_LABELS = {
     "Month-Day (07-17)": NamingMode.MONTH_DAY,
     "Month-Day-Category (07-17-Camera1)": NamingMode.MONTH_DAY_CATEGORY,
 }
-
-
 class MediaToVideoApp:
     """Own and coordinate the desktop interface."""
 
@@ -56,7 +55,6 @@ class MediaToVideoApp:
         self._cancel_event = threading.Event()
         self._scan_result: ScanResult | None = None
         self._busy_operation: str | None = None
-
         self._source = tk.StringVar()
         self._output = tk.StringVar()
         self._ffmpeg_directory = tk.StringVar()
@@ -317,7 +315,11 @@ class MediaToVideoApp:
             return
         source = Path(self._source.get().strip()).expanduser()
         if not source.is_dir():
-            self._show_input_error("Choose an existing source folder first.")
+            self._show_input_error(
+                "The source folder does not exist or is not currently available.",
+                "Reconnect any removable drive, then choose an existing source folder.",
+                f"Selected source: {source}",
+            )
             return
 
         grouping = _GROUPING_LABELS[self._grouping.get()]
@@ -341,7 +343,7 @@ class MediaToVideoApp:
             except ScanCancelled:
                 self._messages.put(("scan_cancelled",))
             except Exception as error:  # Surface unexpected filesystem errors.
-                self._messages.put(("operation_error", "Scan failed", str(error)))
+                self._messages.put(("operation_error", "Scanning source", error))
             else:
                 self._messages.put(("scan_done", result))
 
@@ -354,11 +356,17 @@ class MediaToVideoApp:
             self._status.set(f"Already busy with {self._busy_operation}.")
             return
         if not self._scan_result or not self._scan_result.groups:
-            self._show_input_error("Scan a source containing .media files first.")
+            self._show_input_error(
+                "There are no scanned .media groups ready to convert.",
+                "Choose a source folder and complete Scan source before converting.",
+            )
             return
         output_text = self._output.get().strip()
         if not output_text:
-            self._show_input_error("Choose an output folder first.")
+            self._show_input_error(
+                "No output folder has been selected.",
+                "Choose where the completed videos should be saved, then try again.",
+            )
             return
 
         options = ConversionOptions(
@@ -391,7 +399,7 @@ class MediaToVideoApp:
                     cancel_event=self._cancel_event,
                 )
             except Exception as error:  # Includes missing dependencies.
-                self._messages.put(("operation_error", "Conversion failed", str(error)))
+                self._messages.put(("operation_error", "Converting videos", error))
             else:
                 self._messages.put(("conversion_done", summary))
 
@@ -419,7 +427,10 @@ class MediaToVideoApp:
             )
             self._current_detail.set(f"Validated {current} of {total} clips")
         elif name == "file_skipped":
-            self._append_log(f"Skipped unreadable clip: {details['path']}")
+            self._append_log(
+                "Skipped unreadable clip; conversion will continue with the remaining "
+                f"clips: {details['path']}"
+            )
         elif name == "encoding_progress":
             fraction = details.get("fraction")
             if fraction is None:
@@ -473,7 +484,16 @@ class MediaToVideoApp:
                 )
         else:
             self._status.set("Scan complete: no .media files were found.")
-            messagebox.showinfo("No media files", "No .media files were found below the source.")
+            messagebox.showwarning(
+                "No .media files found",
+                error_messages_format(
+                    "Scanning source",
+                    "No files ending in .media were found below the selected folder.",
+                    "Confirm the correct camera folder is selected and that the drive "
+                    "is fully connected, then scan again.",
+                    f"Scanned folder: {result.source_root}",
+                ),
+            )
 
     def _finish_conversion(self, summary: ConversionSummary) -> None:
         """Display a complete, cancelled, or partially failed run summary."""
@@ -500,8 +520,12 @@ class MediaToVideoApp:
         )
         detail = self._status.get()
         if summary.failed_groups:
-            detail += "\n\n" + "\n".join(summary.failed_groups[:8])
-        messagebox.showinfo("Conversion finished", detail)
+            detail += "\n\nFailure details:\n\n" + "\n\n".join(
+                summary.failed_groups[:8]
+            )
+            messagebox.showwarning("Conversion finished with errors", detail)
+        else:
+            messagebox.showinfo("Conversion finished", detail)
 
     def _poll_messages(self) -> None:
         """Process worker messages on Tk's main thread."""
@@ -529,9 +553,13 @@ class MediaToVideoApp:
                     self._scan_progress.stop()
                     self._current_progress.stop()
                     self._set_idle()
-                    self._status.set(f"{message[1]}: {message[2]}")
-                    self._append_log(self._status.get())
-                    messagebox.showerror(message[1], message[2])
+                    if isinstance(message[2], FFmpegNotFoundError):
+                        details = str(message[2])
+                    else:
+                        details = error_messages_format_operation(message[1], message[2])
+                    self._status.set(f"{message[1]} could not complete. See the error dialog.")
+                    self._append_log(details)
+                    messagebox.showerror(f"{message[1]} error", details)
         except queue.Empty:
             pass
         finally:
@@ -573,11 +601,18 @@ class MediaToVideoApp:
 
         output_text = self._output.get().strip()
         if not output_text:
-            self._show_input_error("Choose an output folder first.")
+            self._show_input_error(
+                "No output folder has been selected.",
+                "Choose an output folder before using Open output folder.",
+            )
             return
         output = Path(output_text).expanduser()
         if not output.is_dir():
-            self._show_input_error("The output folder does not exist yet.")
+            self._show_input_error(
+                "The output folder does not exist yet.",
+                "Run a conversion first or choose an existing output folder.",
+                f"Selected output: {output}",
+            )
             return
         self._status.set(f"Opening output folder: {output}")
         try:
@@ -588,14 +623,20 @@ class MediaToVideoApp:
             else:
                 subprocess.Popen(["xdg-open", str(output)])
         except OSError as error:
-            self._status.set(f"Could not open output folder: {error}")
-            messagebox.showerror("Open folder failed", str(error))
+            details = error_messages_format_operation("Opening output folder", error)
+            self._status.set("The output folder could not be opened. See the error dialog.")
+            self._append_log(details)
+            messagebox.showerror("Open output folder error", details)
 
-    def _show_input_error(self, text: str) -> None:
+    def _show_input_error(
+        self, problem: str, action: str, technical: str | None = None
+    ) -> None:
         """Show validation feedback in both status bar and dialog."""
 
-        self._status.set(text)
-        messagebox.showwarning("Action needed", text)
+        details = error_messages_format("Checking settings", problem, action, technical)
+        self._status.set(problem)
+        self._append_log(details)
+        messagebox.showwarning("Action needed", details)
 
     def _append_log(self, text: str) -> None:
         """Append one readable line to the persistent activity log."""
@@ -604,7 +645,6 @@ class MediaToVideoApp:
         self._log.insert(tk.END, text.rstrip() + "\n")
         self._log.see(tk.END)
         self._log.configure(state=tk.DISABLED)
-
     def _clear_group_table(self) -> None:
         """Remove all stale rows from the scan preview."""
 
