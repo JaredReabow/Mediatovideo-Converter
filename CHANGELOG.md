@@ -2,6 +2,19 @@
 
 All notable changes to Mediatovideo Converter are recorded here.
 
+## [0.3.0] - 2026-07-18
+
+### Added
+
+- Modal MKV-to-MP4 tool in the main graphical interface.
+- MKV input and MP4 destination file selectors with collision-safe suggestions.
+- H.264 video, `yuv420p` pixel format, and AAC audio conversion policy.
+- Single-file progress reporting, cancellation, partial-file cleanup, output
+  folder opening, and structured errors.
+- Converter API and regression tests for successful conversion, input
+  validation, and overwrite protection.
+- Privacy-safe render of the new single-file conversion interface.
+
 ## [0.2.1] - 2026-07-17
 
 ### Changed

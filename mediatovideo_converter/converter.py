@@ -18,6 +18,7 @@ from .models import (
     ConversionOptions,
     ConversionSummary,
     MediaGroup,
+    MkvConversionResult,
     NamingMode,
     OutputLayout,
     VideoFormat,
@@ -212,6 +213,124 @@ def converter_convert(
     )
 
 
+def converter_convert_mkv_to_mp4(
+    source: Path,
+    target: Path,
+    ffmpeg_directory: Path | None = None,
+    event: ConversionEvent | None = None,
+    cancel_event: threading.Event | None = None,
+) -> MkvConversionResult:
+    """Convert one MKV to a compatible H.264/AAC MP4 without overwriting files."""
+
+    source = source.expanduser().resolve()
+    target = target.expanduser().resolve()
+    if not source.is_file():
+        raise ConversionProcessError(
+            error_messages_format(
+                "Checking MKV input",
+                "The selected MKV file does not exist or is not currently available.",
+                "Reconnect the source drive or select an existing MKV file, then try again.",
+                error_messages_path(source),
+            )
+        )
+    if source.suffix.casefold() != ".mkv":
+        raise ConversionProcessError(
+            error_messages_format(
+                "Checking MKV input",
+                "The selected input is not an MKV file.",
+                "Select a file whose name ends in .mkv.",
+                error_messages_path(source),
+            )
+        )
+    if target.suffix.casefold() != ".mp4":
+        raise ConversionProcessError(
+            error_messages_format(
+                "Checking MP4 output",
+                "The output filename does not end in .mp4.",
+                "Choose an output filename ending in .mp4.",
+                error_messages_path(target),
+            )
+        )
+    if target.exists():
+        raise ConversionProcessError(
+            error_messages_format(
+                "Checking MP4 output",
+                "The selected output file already exists and will not be overwritten.",
+                "Choose a different MP4 filename or move the existing file, then try again.",
+                error_messages_path(target),
+            )
+        )
+
+    ffmpeg, ffprobe = converter_find_tools(ffmpeg_directory)
+    _converter_check_cancel(cancel_event)
+    duration = _converter_probe_media(ffprobe, source)
+    if duration is None:
+        raise ConversionProcessError(
+            error_messages_format(
+                "Reading MKV input",
+                "FFprobe could not read the selected MKV file.",
+                "Confirm the file plays correctly and copy it from the source drive again "
+                "if it may be incomplete.",
+                error_messages_path(source),
+            )
+        )
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ConversionProcessError(
+            _converter_explain_output_error(error, target)
+        ) from error
+
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a:0?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+    ]
+    _converter_emit(
+        event,
+        "single_started",
+        source=source,
+        target=target,
+        duration=duration,
+    )
+    try:
+        _converter_execute_ffmpeg(
+            command,
+            target,
+            VideoFormat.MP4_H264,
+            duration,
+            event,
+            cancel_event,
+        )
+    except ConversionCancelled:
+        return MkvConversionResult(output=None, cancelled=True)
+    _converter_emit(event, "single_completed", source=source, target=target)
+    return MkvConversionResult(output=target, cancelled=False)
+
+
 def _converter_probe_media(ffprobe: str, media_file: Path) -> float | None:
     """Return duration for a readable clip, using zero when duration is unknown."""
 
@@ -255,147 +374,178 @@ def _converter_run_ffmpeg(
 ) -> None:
     """Run one FFmpeg concat job and atomically publish its completed output."""
 
+    with tempfile.TemporaryDirectory(prefix="mediatovideo-") as temporary:
+        concat_path = Path(temporary) / "clips.ffconcat"
+        concat_path.write_text(
+            "ffconcat version 1.0\n"
+            + "".join(
+                f"file '{_converter_escape_concat_path(path)}'\n" for path in media_files
+            ),
+            encoding="utf-8",
+        )
+        command = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_path),
+        ]
+        if video_format is VideoFormat.MKV_COPY:
+            command.extend(["-c", "copy"])
+        else:
+            command.extend(
+                [
+                    "-map",
+                    "0:v:0?",
+                    "-map",
+                    "0:a:0?",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "medium",
+                    "-crf",
+                    "20",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-movflags",
+                    "+faststart",
+                ]
+            )
+        _converter_execute_ffmpeg(
+            command,
+            target,
+            video_format,
+            total_duration,
+            event,
+            cancel_event,
+        )
+
+
+def _converter_execute_ffmpeg(
+    command: list[str],
+    target: Path,
+    video_format: VideoFormat,
+    total_duration: float,
+    event: ConversionEvent | None,
+    cancel_event: threading.Event | None,
+) -> None:
+    """Execute one FFmpeg command with progress, cancellation, and atomic output."""
+
     partial_target = target.with_name(f".{target.stem}.partial{target.suffix}")
+    full_command = [
+        *command,
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        str(partial_target),
+    ]
     try:
-        with tempfile.TemporaryDirectory(prefix="mediatovideo-") as temporary:
-            concat_path = Path(temporary) / "clips.ffconcat"
-            concat_path.write_text(
-                "ffconcat version 1.0\n"
-                + "".join(
-                    f"file '{_converter_escape_concat_path(path)}'\n"
-                    for path in media_files
-                ),
-                encoding="utf-8",
-            )
-            command = [
-                ffmpeg,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_path),
-            ]
-            if video_format is VideoFormat.MKV_COPY:
-                command.extend(["-c", "copy"])
-            else:
-                command.extend(
-                    [
-                        "-map",
-                        "0:v:0?",
-                        "-map",
-                        "0:a:0?",
-                        "-c:v",
-                        "libx264",
-                        "-preset",
-                        "medium",
-                        "-crf",
-                        "20",
-                        "-c:a",
-                        "aac",
-                        "-b:a",
-                        "128k",
-                        "-movflags",
-                        "+faststart",
-                    ]
-                )
-            command.extend(["-progress", "pipe:1", "-nostats", str(partial_target)])
-
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                # Merging stderr prevents a verbose decoder error from filling
-                # an unread pipe and deadlocking the progress reader.
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                **_converter_subprocess_window_options(),
-            )
-            assert process.stdout is not None
-            diagnostic_lines: deque[str] = deque(maxlen=12)
-            last_encoding_event_time = 0.0
-            last_encoding_fraction: float | None = None
-            try:
-                while True:
-                    if cancel_event and cancel_event.is_set():
-                        process.terminate()
-                        try:
-                            process.wait(timeout=3)
-                        except subprocess.TimeoutExpired:
-                            process.kill()
-                            process.wait()
-                        raise ConversionCancelled()
-                    line = process.stdout.readline()
-                    if not line and process.poll() is not None:
-                        break
-                    key, separator, value = line.strip().partition("=")
-                    if separator and key in {"out_time_us", "out_time_ms"}:
-                        try:
-                            elapsed = int(value) / 1_000_000
-                        except ValueError:
-                            continue
-                        fraction = (
-                            min(1.0, elapsed / total_duration)
-                            if total_duration
-                            else None
+        process = subprocess.Popen(
+            full_command,
+            stdout=subprocess.PIPE,
+            # Merging stderr prevents a verbose decoder error from filling an
+            # unread pipe and deadlocking the progress reader.
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            **_converter_subprocess_window_options(),
+        )
+        assert process.stdout is not None
+        diagnostic_lines: deque[str] = deque(maxlen=12)
+        last_encoding_event_time = 0.0
+        last_encoding_fraction: float | None = None
+        try:
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    process.terminate()
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    raise ConversionCancelled()
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                key, separator, value = line.strip().partition("=")
+                if separator and key in {"out_time_us", "out_time_ms"}:
+                    try:
+                        elapsed = int(value) / 1_000_000
+                    except ValueError:
+                        continue
+                    fraction = (
+                        min(1.0, elapsed / total_duration) if total_duration else None
+                    )
+                    now = time.monotonic()
+                    should_emit = False
+                    if fraction is None:
+                        should_emit = (
+                            now - last_encoding_event_time
+                            >= _ENCODING_EVENT_INTERVAL_SECONDS
                         )
-                        now = time.monotonic()
-                        should_emit = False
-                        if fraction is None:
-                            should_emit = (
-                                now - last_encoding_event_time
-                                >= _ENCODING_EVENT_INTERVAL_SECONDS
-                            )
-                        else:
-                            should_emit = (
-                                last_encoding_fraction is None
-                                or fraction >= 1.0
-                                or fraction - last_encoding_fraction
-                                >= _ENCODING_EVENT_MIN_FRACTION_STEP
-                                or now - last_encoding_event_time
-                                >= _ENCODING_EVENT_INTERVAL_SECONDS
-                            )
-                        if should_emit:
-                            _converter_emit(
-                                event,
-                                "encoding_progress",
-                                elapsed=elapsed,
-                                duration=total_duration,
-                                fraction=fraction,
-                            )
-                            last_encoding_event_time = now
-                            last_encoding_fraction = fraction
-                    elif line.strip() and key not in {
-                        "bitrate",
-                        "drop_frames",
-                        "dup_frames",
-                        "fps",
-                        "frame",
-                        "out_time",
-                        "progress",
-                        "speed",
-                        "stream_0_0_q",
-                        "total_size",
-                    }:
-                        diagnostic_lines.append(line.strip())
-            finally:
-                process.stdout.close()
+                    else:
+                        should_emit = (
+                            last_encoding_fraction is None
+                            or fraction >= 1.0
+                            or fraction - last_encoding_fraction
+                            >= _ENCODING_EVENT_MIN_FRACTION_STEP
+                            or now - last_encoding_event_time
+                            >= _ENCODING_EVENT_INTERVAL_SECONDS
+                        )
+                    if should_emit:
+                        _converter_emit(
+                            event,
+                            "encoding_progress",
+                            elapsed=elapsed,
+                            duration=total_duration,
+                            fraction=fraction,
+                        )
+                        last_encoding_event_time = now
+                        last_encoding_fraction = fraction
+                elif line.strip() and key not in {
+                    "bitrate",
+                    "drop_frames",
+                    "dup_frames",
+                    "fps",
+                    "frame",
+                    "out_time",
+                    "progress",
+                    "speed",
+                    "stream_0_0_q",
+                    "total_size",
+                }:
+                    diagnostic_lines.append(line.strip())
+        finally:
+            process.stdout.close()
 
-            if process.returncode != 0:
-                final_line = diagnostic_lines[-1] if diagnostic_lines else "FFmpeg failed"
-                raise ConversionProcessError(
-                    _converter_explain_ffmpeg_error(final_line, target, video_format)
+        if process.returncode != 0:
+            final_line = diagnostic_lines[-1] if diagnostic_lines else "FFmpeg failed"
+            raise ConversionProcessError(
+                _converter_explain_ffmpeg_error(final_line, target, video_format)
+            )
+        if target.exists():
+            raise ConversionProcessError(
+                error_messages_format(
+                    "Saving output video",
+                    "The output file appeared during conversion and will not be overwritten.",
+                    "Choose a different output filename, then convert again.",
+                    error_messages_path(target),
                 )
-            try:
-                os.replace(partial_target, target)
-            except OSError as error:
-                raise ConversionProcessError(
-                    _converter_explain_output_error(error, target)
-                ) from error
+            )
+        try:
+            os.replace(partial_target, target)
+        except OSError as error:
+            raise ConversionProcessError(
+                _converter_explain_output_error(error, target)
+            ) from error
     finally:
         partial_target.unlink(missing_ok=True)
 

@@ -15,6 +15,8 @@ media, filenames, source folders, video frames, or photographs.
 
 ![Mediatovideo Converter conversion progress](docs/conversion-progress.png)
 
+![Single-file MKV to MP4 tool](docs/mkv-to-mp4.png)
+
 ## Features
 
 - Select one day folder such as `DCIM/2026/07/17`, or select a higher folder to
@@ -27,6 +29,7 @@ media, filenames, source folders, video frames, or photographs.
   safe numeric suffix instead of being overwritten.
 - Export fast, lossless MKV files with stream copy, or compatible MP4 files
   re-encoded as H.264 video and AAC audio.
+- Select an existing MKV file and convert it directly to an H.264/AAC MP4.
 - See scanning, clip validation, current-video, and overall conversion progress.
 - Cancel a scan or conversion; completed outputs remain intact and partial
   output files are removed.
@@ -130,6 +133,18 @@ cannot be recovered merely by changing the container.
 Files are sorted by their full relative paths before concatenation. Existing
 outputs are never overwritten.
 
+## Convert an existing MKV to MP4
+
+Click **MKV → MP4 tool** in the main window. Choose one `.mkv` input file and
+review the suggested `.mp4` destination. The tool:
+
+- suggests a non-conflicting output filename;
+- refuses to overwrite an existing MP4;
+- converts video to H.264 with a broadly compatible pixel format;
+- converts available audio to AAC;
+- shows encoding progress and supports safe cancellation;
+- removes partial output if conversion fails or is cancelled.
+
 ## Tests
 
 ```sh
@@ -137,5 +152,5 @@ python -m unittest discover -s tests -v
 ```
 
 The test suite covers date discovery, day/child grouping, fallback layouts,
-portable naming, collision handling, FFmpeg orchestration, error clarity, and
-both native installer contracts.
+portable naming, collision handling, folder and single-file FFmpeg
+orchestration, error clarity, and both native installer contracts.

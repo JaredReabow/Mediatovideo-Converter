@@ -34,3 +34,12 @@ project history.
   and logs, throttled high-frequency progress events, and single-pass scanning.
 - Preserved final scan/conversion feedback while reducing avoidable memory and
   interface-update pressure.
+
+## 2026-07-18 — Version 0.3.0
+
+- Added a dedicated graphical MKV-to-MP4 workflow without changing the existing
+  folder-based `.media` conversion workflow.
+- Added H.264/AAC encoding, visible progress, cancellation, overwrite
+  protection, partial-file cleanup, clear errors, and output-folder access.
+- Added single-file converter tests and updated the privacy-safe application
+  renders and documentation.

@@ -10,8 +10,10 @@ import unittest
 from pathlib import Path
 
 from mediatovideo_converter.converter import (
+    ConversionProcessError,
     FFmpegNotFoundError,
     converter_convert,
+    converter_convert_mkv_to_mp4,
     converter_find_tools,
     converter_plan_targets,
 )
@@ -75,6 +77,30 @@ class ConverterPlanningTests(unittest.TestCase):
             self.assertTrue(ffmpeg.endswith(f"ffmpeg{suffix}"))
             self.assertTrue(ffprobe.endswith(f"ffprobe{suffix}"))
 
+    def test_mkv_converter_refuses_to_overwrite_existing_mp4(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.mkv"
+            target = root / "source.mp4"
+            source.write_bytes(b"mkv")
+            target.write_bytes(b"existing")
+
+            with self.assertRaisesRegex(
+                ConversionProcessError, "will not be overwritten"
+            ):
+                converter_convert_mkv_to_mp4(source, target)
+
+            self.assertEqual(target.read_bytes(), b"existing")
+
+    def test_mkv_converter_requires_mkv_input_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.avi"
+            source.write_bytes(b"video")
+
+            with self.assertRaisesRegex(ConversionProcessError, "not an MKV"):
+                converter_convert_mkv_to_mp4(source, root / "output.mp4")
+
     @unittest.skipIf(os.name == "nt", "POSIX fake executable smoke test")
     def test_conversion_pipeline_publishes_completed_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -114,6 +140,39 @@ class ConverterPlanningTests(unittest.TestCase):
             self.assertEqual(summary.completed[0].read_bytes(), b"converted")
             self.assertIn("encoding_progress", events)
             self.assertIn("group_completed", events)
+
+    @unittest.skipIf(os.name == "nt", "POSIX fake executable smoke test")
+    def test_mkv_conversion_pipeline_publishes_mp4(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tools = root / "tools"
+            tools.mkdir()
+            self._write_fake_tool(tools / "ffprobe", "print('2.0')\n")
+            self._write_fake_tool(
+                tools / "ffmpeg",
+                "import pathlib, sys\n"
+                "pathlib.Path(sys.argv[-1]).write_bytes(b'mp4')\n"
+                "print('out_time_us=2000000', flush=True)\n"
+                "print('progress=end', flush=True)\n",
+            )
+            source = root / "recording.mkv"
+            target = root / "recording.mp4"
+            source.write_bytes(b"mkv")
+            events: list[str] = []
+
+            result = converter_convert_mkv_to_mp4(
+                source,
+                target,
+                ffmpeg_directory=tools,
+                event=lambda name, _details: events.append(name),
+            )
+
+            self.assertFalse(result.cancelled)
+            self.assertEqual(result.output, target.resolve())
+            self.assertEqual(target.read_bytes(), b"mp4")
+            self.assertIn("single_started", events)
+            self.assertIn("encoding_progress", events)
+            self.assertIn("single_completed", events)
 
     @staticmethod
     def _group(root: Path, category: str) -> MediaGroup:

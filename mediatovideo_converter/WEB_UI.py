@@ -17,7 +17,12 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from . import __version__
-from .converter import FFmpegNotFoundError, converter_convert, converter_find_tools
+from .converter import (
+    FFmpegNotFoundError,
+    converter_convert,
+    converter_convert_mkv_to_mp4,
+    converter_find_tools,
+)
 from .error_messages import error_messages_format, error_messages_format_operation
 from .models import (
     ConversionOptions,
@@ -48,6 +53,371 @@ _NAMING_LABELS = {
 }
 _MAX_UI_MESSAGES = 5000
 _MAX_LOG_LINES = 2000
+
+
+class MkvToMp4Dialog:
+    """Modal single-file MKV-to-MP4 conversion interface."""
+
+    def __init__(
+        self, parent: tk.Tk, ffmpeg_directory: Path | None = None
+    ) -> None:
+        self._parent = parent
+        self._ffmpeg_directory = ffmpeg_directory
+        self._messages: queue.Queue[tuple[Any, ...]] = queue.Queue(maxsize=500)
+        self._cancel_event = threading.Event()
+        self._busy = False
+        self._close_when_done = False
+        self._completed_output: Path | None = None
+
+        self._source = tk.StringVar()
+        self._target = tk.StringVar()
+        self._status = tk.StringVar(
+            value="Choose an MKV file and where its MP4 copy should be saved."
+        )
+        self._progress_detail = tk.StringVar(value="Waiting")
+
+        self._window = tk.Toplevel(parent)
+        self._window.title("MKV to MP4 — Mediatovideo Converter")
+        self._window.geometry("720x390")
+        self._window.minsize(620, 360)
+        self._window.transient(parent)
+        self._window.grab_set()
+        self._window.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._build_interface()
+        self._window.after(100, self._poll_messages)
+
+    def _build_interface(self) -> None:
+        """Create file selectors, progress, and conversion controls."""
+
+        outer = ttk.Frame(self._window, padding=18)
+        outer.pack(fill=tk.BOTH, expand=True)
+        outer.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            outer,
+            text="Convert one MKV file to MP4",
+            font=("TkDefaultFont", 16, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            outer,
+            text="Video is encoded as H.264 and available audio as AAC for compatibility.",
+        ).grid(row=1, column=0, sticky="w", pady=(2, 12))
+
+        files = ttk.LabelFrame(outer, text="Input and output files", padding=10)
+        files.grid(row=2, column=0, sticky="ew")
+        files.columnconfigure(1, weight=1)
+        ttk.Label(files, text="MKV input").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        self._source_entry = ttk.Entry(files, textvariable=self._source)
+        self._source_entry.grid(row=0, column=1, sticky="ew", pady=4)
+        self._source_button = ttk.Button(
+            files, text="Browse…", command=self._choose_source
+        )
+        self._source_button.grid(row=0, column=2, padx=(8, 0), pady=4)
+
+        ttk.Label(files, text="MP4 output").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        self._target_entry = ttk.Entry(files, textvariable=self._target)
+        self._target_entry.grid(row=1, column=1, sticky="ew", pady=4)
+        self._target_button = ttk.Button(
+            files, text="Browse…", command=self._choose_target
+        )
+        self._target_button.grid(row=1, column=2, padx=(8, 0), pady=4)
+
+        progress = ttk.LabelFrame(outer, text="Conversion progress", padding=10)
+        progress.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        progress.columnconfigure(0, weight=1)
+        ttk.Label(progress, textvariable=self._progress_detail).grid(
+            row=0, column=0, sticky="w"
+        )
+        self._progress = ttk.Progressbar(
+            progress, mode="determinate", maximum=100, value=0
+        )
+        self._progress.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+
+        ttk.Label(
+            outer,
+            textvariable=self._status,
+            wraplength=660,
+            anchor="w",
+            justify=tk.LEFT,
+        ).grid(row=4, column=0, sticky="ew", pady=(12, 0))
+
+        controls = ttk.Frame(outer)
+        controls.grid(row=5, column=0, sticky="ew", pady=(14, 0))
+        controls.columnconfigure(3, weight=1)
+        self._convert_button = ttk.Button(
+            controls, text="Convert to MP4", command=self._start_conversion
+        )
+        self._convert_button.grid(row=0, column=0, padx=(0, 8))
+        self._cancel_button = ttk.Button(
+            controls, text="Cancel", command=self._cancel, state=tk.DISABLED
+        )
+        self._cancel_button.grid(row=0, column=1)
+        self._open_button = ttk.Button(
+            controls,
+            text="Open output folder",
+            command=self._open_output_folder,
+            state=tk.DISABLED,
+        )
+        self._open_button.grid(row=0, column=4, padx=(8, 0))
+
+    def _choose_source(self) -> None:
+        """Choose an MKV and suggest a collision-free MP4 filename."""
+
+        selected = filedialog.askopenfilename(
+            parent=self._window,
+            title="Choose an MKV file",
+            filetypes=(("Matroska video", "*.mkv"), ("All files", "*.*")),
+        )
+        if not selected:
+            self._status.set("MKV selection cancelled; no file changed.")
+            return
+        source = Path(selected)
+        self._source.set(str(source))
+        target = source.with_suffix(".mp4")
+        if target.exists():
+            target = source.with_name(f"{source.stem}-converted.mp4")
+            number = 2
+            while target.exists():
+                target = source.with_name(f"{source.stem}-converted-{number}.mp4")
+                number += 1
+        self._target.set(str(target))
+        self._status.set("MKV selected. Review the MP4 destination, then convert.")
+
+    def _choose_target(self) -> None:
+        """Choose the destination MP4 path."""
+
+        source_text = self._source.get().strip()
+        source = Path(source_text).expanduser() if source_text else None
+        selected = filedialog.asksaveasfilename(
+            parent=self._window,
+            title="Save converted MP4 as",
+            defaultextension=".mp4",
+            filetypes=(("MP4 video", "*.mp4"), ("All files", "*.*")),
+            initialdir=str(source.parent) if source else None,
+            initialfile=f"{source.stem}.mp4" if source else "converted.mp4",
+        )
+        if selected:
+            self._target.set(selected)
+            self._status.set("MP4 destination selected.")
+        else:
+            self._status.set("MP4 destination selection cancelled; no file changed.")
+
+    def _start_conversion(self) -> None:
+        """Validate visible fields and start conversion off the Tk thread."""
+
+        if self._busy:
+            self._status.set("The MKV conversion is already running.")
+            return
+        source_text = self._source.get().strip()
+        target_text = self._target.get().strip()
+        if not source_text:
+            self._show_error(
+                error_messages_format(
+                    "Checking MKV input",
+                    "No MKV input file has been selected.",
+                    "Choose an MKV file, then try again.",
+                )
+            )
+            return
+        if not target_text:
+            self._show_error(
+                error_messages_format(
+                    "Checking MP4 output",
+                    "No MP4 output filename has been selected.",
+                    "Choose where the MP4 should be saved, then try again.",
+                )
+            )
+            return
+
+        source = Path(source_text)
+        target = Path(target_text)
+        self._set_busy(True)
+        self._cancel_event.clear()
+        self._completed_output = None
+        self._progress.stop()
+        self._progress.configure(mode="indeterminate", value=0)
+        self._progress.start(12)
+        self._progress_detail.set("Checking MKV and locating FFmpeg…")
+        self._status.set("Conversion started. Progress will update below.")
+
+        def worker() -> None:
+            try:
+                result = converter_convert_mkv_to_mp4(
+                    source,
+                    target,
+                    ffmpeg_directory=self._ffmpeg_directory,
+                    event=lambda name, details: self._queue_event(name, details),
+                    cancel_event=self._cancel_event,
+                )
+            except Exception as error:
+                self._messages.put(("error", error))
+            else:
+                self._messages.put(("done", result))
+
+        threading.Thread(target=worker, name="mkv-to-mp4", daemon=True).start()
+
+    def _queue_event(self, name: str, details: dict[str, object]) -> None:
+        """Queue progress events while allowing redundant updates to be dropped."""
+
+        try:
+            self._messages.put_nowait(("event", name, details))
+        except queue.Full:
+            pass
+
+    def _poll_messages(self) -> None:
+        """Render worker messages safely on Tk's thread."""
+
+        try:
+            while True:
+                message = self._messages.get_nowait()
+                if message[0] == "event":
+                    self._handle_event(message[1], message[2])
+                elif message[0] == "error":
+                    self._finish_error(message[1])
+                elif message[0] == "done":
+                    self._finish_conversion(message[1])
+        except queue.Empty:
+            pass
+        try:
+            if self._window.winfo_exists():
+                self._window.after(100, self._poll_messages)
+        except tk.TclError:
+            return
+
+    def _handle_event(self, name: str, details: dict[str, object]) -> None:
+        """Display converter progress events."""
+
+        if name == "single_started":
+            self._progress_detail.set(f"Converting {Path(details['source']).name}…")
+        elif name == "encoding_progress":
+            fraction = details.get("fraction")
+            if fraction is None:
+                self._progress_detail.set("Encoding MP4… duration unavailable")
+                return
+            self._progress.stop()
+            self._progress.configure(
+                mode="determinate", maximum=100, value=float(fraction) * 100
+            )
+            self._progress_detail.set(f"Encoding MP4… {float(fraction) * 100:.1f}%")
+
+    def _finish_conversion(self, result: Any) -> None:
+        """Show cancellation or successful completion."""
+
+        self._progress.stop()
+        self._set_busy(False)
+        if result.cancelled:
+            self._progress.configure(mode="determinate", value=0)
+            self._progress_detail.set("Conversion cancelled")
+            self._status.set("MKV to MP4 conversion was cancelled safely.")
+        else:
+            self._completed_output = result.output
+            self._progress.configure(mode="determinate", maximum=100, value=100)
+            self._progress_detail.set("Conversion complete")
+            self._status.set(f"MP4 created successfully: {result.output}")
+            self._open_button.configure(state=tk.NORMAL)
+            messagebox.showinfo(
+                "MKV conversion complete",
+                f"The MP4 was created successfully.\n\nOutput: {result.output}",
+                parent=self._window,
+            )
+        if self._close_when_done:
+            self._destroy()
+
+    def _finish_error(self, error: BaseException) -> None:
+        """Restore controls and show a structured conversion error."""
+
+        self._progress.stop()
+        self._progress.configure(mode="determinate", value=0)
+        self._progress_detail.set("Conversion failed")
+        self._set_busy(False)
+        text = str(error)
+        details = (
+            text
+            if text.startswith("Stage:")
+            else error_messages_format_operation("Converting MKV to MP4", error)
+        )
+        self._status.set("The MKV could not be converted. See the error dialog.")
+        self._show_error(details)
+        if self._close_when_done:
+            self._destroy()
+
+    def _show_error(self, details: str) -> None:
+        """Show an error in both the window and a readable dialog."""
+
+        self._status.set(details.replace("\n", " "))
+        messagebox.showerror("MKV to MP4 error", details, parent=self._window)
+
+    def _set_busy(self, busy: bool) -> None:
+        """Enable only actions that are safe for the current state."""
+
+        self._busy = busy
+        normal_state = tk.DISABLED if busy else tk.NORMAL
+        self._source_entry.configure(state=normal_state)
+        self._target_entry.configure(state=normal_state)
+        self._source_button.configure(state=normal_state)
+        self._target_button.configure(state=normal_state)
+        self._convert_button.configure(state=normal_state)
+        self._cancel_button.configure(state=tk.NORMAL if busy else tk.DISABLED)
+
+    def _cancel(self) -> None:
+        """Request a safe FFmpeg cancellation and acknowledge immediately."""
+
+        if not self._busy:
+            self._status.set("There is no MKV conversion running to cancel.")
+            return
+        self._cancel_event.set()
+        self._cancel_button.configure(state=tk.DISABLED)
+        self._status.set("Cancellation requested; waiting for FFmpeg to stop safely…")
+
+    def _open_output_folder(self) -> None:
+        """Open the folder containing the completed MP4."""
+
+        if not self._completed_output:
+            self._status.set("No completed MP4 is available to open yet.")
+            return
+        folder = self._completed_output.parent
+        try:
+            if os.name == "nt":
+                os.startfile(folder)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
+        except OSError as error:
+            self._show_error(
+                error_messages_format_operation("Opening MP4 output folder", error)
+            )
+        else:
+            self._status.set(f"Opened output folder: {folder}")
+
+    def _on_close(self) -> None:
+        """Protect a running conversion when the dialog is closed."""
+
+        if self._busy:
+            if not messagebox.askyesno(
+                "Conversion running",
+                "Cancel the MKV conversion and close this window?",
+                parent=self._window,
+            ):
+                self._status.set("MKV conversion is continuing.")
+                return
+            self._close_when_done = True
+            self._cancel()
+            return
+        self._destroy()
+
+    def _destroy(self) -> None:
+        """Release the modal grab and close the dialog."""
+
+        try:
+            self._window.grab_release()
+        except tk.TclError:
+            pass
+        self._window.destroy()
 
 
 class MediaToVideoApp:
@@ -213,9 +583,13 @@ class MediaToVideoApp:
             controls, text="Cancel", command=self._cancel, state=tk.DISABLED
         )
         self._cancel_button.grid(row=0, column=2)
+        self._mkv_button = ttk.Button(
+            controls, text="MKV → MP4 tool", command=self._open_mkv_tool
+        )
+        self._mkv_button.grid(row=0, column=4, padx=(8, 0))
         ttk.Button(
             controls, text="Open output folder", command=self._open_output
-        ).grid(row=0, column=4, padx=(8, 0))
+        ).grid(row=0, column=5, padx=(8, 0))
 
         status = ttk.Label(
             outer,
@@ -305,6 +679,23 @@ class MediaToVideoApp:
                 self._status.set("FFmpeg and FFprobe found in the selected folder.")
         else:
             self._status.set("FFmpeg folder selection cancelled; no folder changed.")
+
+    def _open_mkv_tool(self) -> None:
+        """Open the modal single-file MKV-to-MP4 converter."""
+
+        if self._busy_operation:
+            self._show_input_error(
+                f"The application is currently {self._busy_operation}.",
+                "Wait for the current operation to finish or cancel it before "
+                "opening the MKV to MP4 tool.",
+            )
+            return
+        ffmpeg_text = self._ffmpeg_directory.get().strip()
+        MkvToMp4Dialog(
+            self._root,
+            Path(ffmpeg_text).expanduser() if ffmpeg_text else None,
+        )
+        self._status.set("MKV to MP4 tool opened.")
 
     def _source_or_grouping_changed(self, *_args: object) -> None:
         """Invalidate stale scan data when its inputs change."""
@@ -581,6 +972,7 @@ class MediaToVideoApp:
         self._cancel_event.clear()
         self._scan_button.configure(state=tk.DISABLED)
         self._convert_button.configure(state=tk.DISABLED)
+        self._mkv_button.configure(state=tk.DISABLED)
         self._cancel_button.configure(state=tk.NORMAL)
         self._status.set(f"{operation.capitalize()} in progress…")
 
@@ -589,6 +981,7 @@ class MediaToVideoApp:
 
         self._busy_operation = None
         self._scan_button.configure(state=tk.NORMAL)
+        self._mkv_button.configure(state=tk.NORMAL)
         self._cancel_button.configure(state=tk.DISABLED)
         if self._scan_result and self._scan_result.groups:
             self._convert_button.configure(state=tk.NORMAL)

@@ -77,3 +77,11 @@ class ConversionSummary:
     failed_groups: tuple[str, ...]
     skipped_files: tuple[Path, ...]
     cancelled: bool
+
+
+@dataclass(frozen=True)
+class MkvConversionResult:
+    """Result of converting one existing MKV file to MP4."""
+
+    output: Path | None
+    cancelled: bool
