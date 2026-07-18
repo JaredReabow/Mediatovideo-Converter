@@ -15,6 +15,14 @@ All notable changes to Mediatovideo Converter are recorded here.
   validation, and overwrite protection.
 - Privacy-safe render of the new single-file conversion interface.
 
+### Documentation
+
+- Replaced the primary interface renders with privacy-safe screenshots of the
+  actual running macOS application and MKV-to-MP4 dialog.
+- Expanded the README with a complete guide to controls, date discovery,
+  grouping, layouts, filenames, formats, progress, cancellation, safety,
+  installation, and structured errors.
+
 ## [0.2.1] - 2026-07-17
 
 ### Changed

@@ -43,3 +43,12 @@ project history.
   protection, partial-file cleanup, clear errors, and output-folder access.
 - Added single-file converter tests and updated the privacy-safe application
   renders and documentation.
+
+## 2026-07-18 — Real screenshots and complete functionality guide
+
+- Captured the actual macOS main window and MKV-to-MP4 dialog with blank fields
+  so no user paths, filenames, media, photographs, or video frames are exposed.
+- Documented every visible control and the complete scan, grouping, naming,
+  layout, encoding, progress, cancellation, safety, installer, and error flow.
+- Kept the fictional conversion-progress illustration as a clearly labelled
+  example rather than presenting it as a real screenshot.
